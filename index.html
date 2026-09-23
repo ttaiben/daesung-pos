@@ -547,6 +547,12 @@
   }
 
   // ---------- Scanner ----------
+  var nativeSupported = (typeof window.BarcodeDetector !== 'undefined');
+  var nativeDetector = null;
+  var videoEl = null;
+  var mediaStream = null;
+  var detectLoopId = null;
+
   document.getElementById('scan-btn').addEventListener('click', function(){ scanMode = 'cart'; openScanner(); });
   document.getElementById('manage-scan-btn').addEventListener('click', function(){ scanMode = 'manage'; openScanner(); });
   document.getElementById('scanner-close').addEventListener('click', closeScanner);
@@ -561,9 +567,97 @@
     scanning = true;
     if(cameraStarted){
       // 카메라가 이미 켜져 있으면 다시 권한을 묻지 않고 그대로 이어서 사용
-      html5QrCode.resume();
+      if(nativeSupported){ runDetectLoop(); } else { html5QrCode.resume(); }
       return;
     }
+    if(nativeSupported){
+      startNativeScanner();
+    }else{
+      startLibraryScanner();
+    }
+  }
+
+  function closeScanner(){
+    document.getElementById('scanner-modal').classList.add('hidden');
+    scanning = false;
+    if(cameraStarted){
+      if(nativeSupported){
+        if(detectLoopId) cancelAnimationFrame(detectLoopId);
+      }else{
+        try{ html5QrCode.pause(true); }catch(e){}
+      }
+    }
+  }
+
+  function onScanSuccess(decodedText){
+    if(!scanning) return;
+    scanning = false;
+    beep();
+    if(nativeSupported){
+      if(detectLoopId) cancelAnimationFrame(detectLoopId);
+    }else{
+      try{ html5QrCode.pause(true); }catch(e){}
+    }
+    document.getElementById('scanner-modal').classList.add('hidden');
+    lookupProduct(decodedText.trim());
+  }
+
+  // --- 네이티브 BarcodeDetector 경로: 안드로이드 크롬 등에서 기기 내장 ML 인식 엔진을
+  //     그대로 사용해서, 웹앱 전용 바코드 앱과 가장 비슷한 속도/정확도를 냄 ---
+  async function startNativeScanner(){
+    try{
+      nativeDetector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128'] });
+    }catch(e){
+      // 이 기기/브라우저는 지원 형식이 달라 네이티브 인식이 안 됨 → 대체 경로로 전환
+      nativeSupported = false;
+      startLibraryScanner();
+      return;
+    }
+    try{
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false
+      });
+      var region = document.getElementById('scanner-region');
+      region.innerHTML = '';
+      videoEl = document.createElement('video');
+      videoEl.setAttribute('playsinline', 'true');
+      videoEl.setAttribute('muted', '');
+      videoEl.muted = true;
+      videoEl.style.width = '100%';
+      videoEl.style.height = '100%';
+      videoEl.style.objectFit = 'cover';
+      region.appendChild(videoEl);
+      videoEl.srcObject = mediaStream;
+      await videoEl.play();
+      cameraStarted = true;
+      runDetectLoop();
+    }catch(err){
+      console.error('native camera start error', err);
+      handleCameraError(err);
+    }
+  }
+
+  function runDetectLoop(){
+    if(!scanning || !nativeDetector || !videoEl) return;
+    nativeDetector.detect(videoEl).then(function(codes){
+      if(!scanning) return;
+      if(codes && codes.length){
+        var value = codes[0].rawValue || '';
+        if(value && checksumValid(value)){
+          onScanSuccess(value);
+          return;
+        }
+        // 체크섬이 안 맞으면 오탐으로 보고 무시하고 계속 스캔
+      }
+      detectLoopId = requestAnimationFrame(runDetectLoop);
+    }).catch(function(){
+      detectLoopId = requestAnimationFrame(runDetectLoop);
+    });
+  }
+
+  // --- html5-qrcode 경로: BarcodeDetector 미지원 브라우저(주로 iOS 사파리/크롬)용 대체 ---
+  function startLibraryScanner(){
     var formats = window.Html5QrcodeSupportedFormats ? [
       Html5QrcodeSupportedFormats.EAN_13,
       Html5QrcodeSupportedFormats.EAN_8,
@@ -579,48 +673,71 @@
     html5QrCode.start(
       { facingMode: "environment" },
       { fps: 10, qrbox: { width: 300, height: 130 }, aspectRatio: 1.7777778 },
-      onScanSuccess,
+      function(decodedText){
+        if(checksumValid(decodedText)) onScanSuccess(decodedText);
+        // 체크섬이 안 맞으면 무시하고 계속 스캔(콜백만 받고 아무 것도 안 함)
+      },
       function(){ /* 인식 실패는 계속 시도하므로 무시 */ }
     ).then(function(){
       cameraStarted = true;
     }).catch(function(err){
       console.error('camera start error', err);
-      var msg = '카메라를 열 수 없어요.';
-      var name = (err && (err.name || err.message)) || '';
-      if(/NotAllowed|Permission/i.test(name)){
-        msg = '카메라 권한이 거부돼 있어요. 주소창의 자물쇠(또는 정보) 아이콘 → 권한 → 카메라를 "허용"으로 바꿔 주세요.';
-      }else if(/NotFound|DevicesNotFound/i.test(name)){
-        msg = '이 기기에서 후면 카메라를 찾지 못했어요.';
-      }else if(/NotReadable|TrackStart/i.test(name)){
-        msg = '카메라가 다른 앱에서 사용 중일 수 있어요. 다른 카메라 앱이나 탭을 닫고 다시 시도해 주세요.';
-      }else if(/Overconstrained|ConstraintNotSatisfied/i.test(name)){
-        msg = '이 기기의 카메라와 설정이 맞지 않아요. 바코드 직접 입력을 이용해 주세요.';
-      }
-      showToast(msg, 'danger');
-      scanning = false;
-      document.getElementById('scanner-modal').classList.add('hidden');
+      handleCameraError(err);
     });
   }
 
-  function closeScanner(){
-    document.getElementById('scanner-modal').classList.add('hidden');
-    scanning = false;
-    if(cameraStarted){
-      try{ html5QrCode.pause(true); }catch(e){}
+  function handleCameraError(err){
+    var msg = '카메라를 열 수 없어요.';
+    var name = (err && (err.name || err.message)) || '';
+    if(/NotAllowed|Permission/i.test(name)){
+      msg = '카메라 권한이 거부돼 있어요. 주소창의 자물쇠(또는 정보) 아이콘 → 권한 → 카메라를 "허용"으로 바꿔 주세요.';
+    }else if(/NotFound|DevicesNotFound/i.test(name)){
+      msg = '이 기기에서 후면 카메라를 찾지 못했어요.';
+    }else if(/NotReadable|TrackStart/i.test(name)){
+      msg = '카메라가 다른 앱에서 사용 중일 수 있어요. 다른 카메라 앱이나 탭을 닫고 다시 시도해 주세요.';
+    }else if(/Overconstrained|ConstraintNotSatisfied/i.test(name)){
+      msg = '이 기기의 카메라와 설정이 맞지 않아요. 바코드 직접 입력을 이용해 주세요.';
     }
+    showToast(msg, 'danger');
+    scanning = false;
+    document.getElementById('scanner-modal').classList.add('hidden');
   }
 
-  function onScanSuccess(decodedText){
-    if(!scanning) return;
-    scanning = false;
-    beep();
-    try{ html5QrCode.pause(true); }catch(e){}
-    document.getElementById('scanner-modal').classList.add('hidden');
-    lookupProduct(decodedText.trim());
+  // EAN-13 / EAN-8 / UPC-A / UPC-E 체크섬 검증 — 흔들림/반사로 잘못 읽은 코드를 걸러냄
+  function checksumValid(code){
+    if(!/^\d+$/.test(code)) return true; // 숫자 바코드가 아니면(CODE_128 등) 검증 생략
+    var d = code.split('').map(Number);
+    var len = d.length;
+    var sum, check, i;
+    if(len === 13){
+      sum = 0;
+      for(i=0;i<12;i++){ sum += d[i] * (i % 2 === 0 ? 1 : 3); }
+      check = (10 - (sum % 10)) % 10;
+      return check === d[12];
+    }
+    if(len === 12){
+      sum = 0;
+      for(i=0;i<11;i++){ sum += d[i] * (i % 2 === 0 ? 3 : 1); }
+      check = (10 - (sum % 10)) % 10;
+      return check === d[11];
+    }
+    if(len === 8){
+      sum = 0;
+      for(i=0;i<7;i++){ sum += d[i] * (i % 2 === 0 ? 3 : 1); }
+      check = (10 - (sum % 10)) % 10;
+      return check === d[7];
+    }
+    return true; // 그 외 길이는 검증 생략
   }
 
   window.addEventListener('beforeunload', function(){
-    if(cameraStarted){ try{ html5QrCode.stop(); }catch(e){} }
+    if(cameraStarted){
+      if(nativeSupported && mediaStream){
+        mediaStream.getTracks().forEach(function(t){ t.stop(); });
+      }else if(!nativeSupported){
+        try{ html5QrCode.stop(); }catch(e){}
+      }
+    }
   });
 
   document.getElementById('manual-barcode-btn').addEventListener('click', function(){
