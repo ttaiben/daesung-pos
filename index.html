@@ -899,7 +899,8 @@
     if(!supa){ return; }
     searchTimer = setTimeout(async function(){
       try{
-        var res = await supa.from('products').select('*').ilike('name', '%'+q+'%').limit(15);
+        var esc = q.replace(/[,()]/g, ' ').trim();
+        var res = await supa.from('products').select('*').or('name.ilike.%'+esc+'%,barcode.ilike.%'+esc+'%').limit(15);
         if(res.error) throw res.error;
         renderSearchResults(res.data || []);
       }catch(e){}
@@ -941,7 +942,10 @@
     if(!supa){ listEl.innerHTML = '<p class="empty-state">설정 탭에서 Supabase를 먼저 연결해 주세요.</p>'; return; }
     try{
       var req = supa.from('products').select('*').order('name', { ascending:true });
-      if(query) req = req.ilike('name', '%'+query+'%');
+      if(query){
+        var esc2 = query.replace(/[,()]/g, ' ').trim();
+        req = req.or('name.ilike.%'+esc2+'%,barcode.ilike.%'+esc2+'%');
+      }
       var res = await req;
       if(res.error) throw res.error;
       renderProductList(res.data || []);
