@@ -208,20 +208,9 @@
     z-index:10;
   }
   .cart-footer.hidden{ display:none; }
-  .cart-total-row, .cart-change-row{ display:flex; justify-content:space-between; align-items:baseline; }
+  .cart-total-row{ display:flex; justify-content:space-between; align-items:baseline; }
   .cart-total-row span{ font-size:13.5px; color:rgba(255,255,255,.68); }
   .cart-total-row strong{ font-size:26px; font-weight:700; }
-  .cart-received-row{ display:flex; align-items:center; justify-content:space-between; margin-top:12px; gap:12px; }
-  .cart-received-row label{ font-size:13.5px; color:rgba(255,255,255,.68); flex-shrink:0; }
-  .cart-received-row input{
-    flex:1; height:40px; text-align:right; padding:0 12px;
-    border:1px solid rgba(255,255,255,.25); border-radius:var(--radius-sm);
-    font-size:16px; font-weight:600; background:rgba(255,255,255,.95); color:var(--color-ink);
-  }
-  .cart-change-row{ margin-top:8px; }
-  .cart-change-row span{ font-size:13.5px; color:rgba(255,255,255,.68); }
-  .cart-change-row strong{ font-size:18px; font-weight:700; color:var(--color-brand-mint); }
-  .cart-change-row strong.short{ color:var(--color-brand-coral); }
   .cart-actions{ display:flex; gap:10px; margin-top:16px; }
   .btn-primary, .btn-secondary{
     flex:1; height:44px; border-radius:var(--radius-md); font-size:15px; font-weight:700;
@@ -402,17 +391,8 @@
       <span>합계</span>
       <strong id="cart-total" class="font-num">0원</strong>
     </div>
-    <div class="cart-received-row">
-      <label for="received-input">받은 금액</label>
-      <input id="received-input" type="number" inputmode="numeric" placeholder="0" class="font-num">
-    </div>
-    <div class="cart-change-row">
-      <span>거스름돈</span>
-      <strong id="cart-change" class="font-num">0원</strong>
-    </div>
     <div class="cart-actions">
-      <button id="cart-clear" class="btn-secondary" type="button">초기화</button>
-      <button id="cart-done" class="btn-primary" type="button">결제 완료</button>
+      <button id="cart-clear" class="btn-primary" type="button">초기화</button>
     </div>
   </footer>
 
@@ -768,7 +748,6 @@
     }
     document.getElementById('cart-footer').classList.toggle('hidden', cart.length === 0 || getCurrentView() !== 'home');
     document.getElementById('cart-total').textContent = formatWon(cartTotal());
-    updateChange();
   }
   document.getElementById('cart-list').addEventListener('click', function(e){
     var btn = e.target.closest('button');
@@ -785,38 +764,12 @@
     return active ? active.dataset.view : 'home';
   }
 
-  function updateChange(){
-    var received = parseInt(document.getElementById('received-input').value, 10) || 0;
-    var total = cartTotal();
-    var change = received - total;
-    var el = document.getElementById('cart-change');
-    if(received === 0){
-      el.textContent = formatWon(0);
-      el.classList.remove('short');
-    }else if(change < 0){
-      el.textContent = '부족 ' + formatWon(Math.abs(change));
-      el.classList.add('short');
-    }else{
-      el.textContent = formatWon(change);
-      el.classList.remove('short');
-    }
-  }
-  document.getElementById('received-input').addEventListener('input', updateChange);
-
   document.getElementById('cart-clear').addEventListener('click', function(){
     if(cart.length === 0) return;
     if(window.confirm('담긴 상품을 모두 비울까요?')){
       cart = [];
-      document.getElementById('received-input').value = '';
       renderCart();
     }
-  });
-  document.getElementById('cart-done').addEventListener('click', function(){
-    if(cart.length === 0) return;
-    cart = [];
-    document.getElementById('received-input').value = '';
-    renderCart();
-    showToast('결제를 완료했어요');
   });
 
   // ---------- Manual search (home) ----------
