@@ -597,14 +597,26 @@
       verbose:false
     });
     html5QrCode.start(
-      { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+      { facingMode: "environment" },
       { fps: 10, qrbox: { width: 300, height: 130 }, aspectRatio: 1.7777778 },
       onScanSuccess,
       function(){ /* 인식 실패는 계속 시도하므로 무시 */ }
     ).then(function(){
       cameraStarted = true;
     }).catch(function(err){
-      showToast('카메라를 열 수 없어요. 권한을 확인해 주세요.', 'danger');
+      console.error('camera start error', err);
+      var msg = '카메라를 열 수 없어요.';
+      var name = (err && (err.name || err.message)) || '';
+      if(/NotAllowed|Permission/i.test(name)){
+        msg = '카메라 권한이 거부돼 있어요. 주소창의 자물쇠(또는 정보) 아이콘 → 권한 → 카메라를 "허용"으로 바꿔 주세요.';
+      }else if(/NotFound|DevicesNotFound/i.test(name)){
+        msg = '이 기기에서 후면 카메라를 찾지 못했어요.';
+      }else if(/NotReadable|TrackStart/i.test(name)){
+        msg = '카메라가 다른 앱에서 사용 중일 수 있어요. 다른 카메라 앱이나 탭을 닫고 다시 시도해 주세요.';
+      }else if(/Overconstrained|ConstraintNotSatisfied/i.test(name)){
+        msg = '이 기기의 카메라와 설정이 맞지 않아요. 바코드 직접 입력을 이용해 주세요.';
+      }
+      showToast(msg, 'danger');
       scanning = false;
       document.getElementById('scanner-modal').classList.add('hidden');
     });
