@@ -127,6 +127,8 @@
   }
   .btn-scan:active{ transform:scale(.98); }
   .btn-scan svg{ width:28px; height:28px; flex-shrink:0; }
+  .btn-scan-compact{ height:56px; font-size:15px; border-radius:var(--radius-lg); }
+  .btn-scan-compact svg{ width:22px; height:22px; }
 
   .link-btn{
     display:block;
@@ -252,6 +254,7 @@
   #product-search{
     width:100%; height:44px; padding:0 16px; border:1px solid var(--color-hairline);
     border-radius:var(--radius-pill); background:var(--color-canvas); font-size:14.5px;
+    margin-top:20px;
   }
   .product-list{ margin-top:16px; border-top:1px solid var(--color-hairline); }
   .product-row{ padding:14px 0; border-bottom:1px solid var(--color-hairline); }
@@ -364,6 +367,11 @@
   </main>
 
   <main id="view-products" class="view">
+    <button id="manage-scan-btn" class="btn-scan btn-scan-compact" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3"/><path d="M17 4h3a1 1 0 0 1 1 1v3"/><path d="M21 16v3a1 1 0 0 1-1 1h-3"/><path d="M7 20H4a1 1 0 0 1-1-1v-3"/><rect x="7" y="8" width="10" height="8" rx="1"/></svg>
+      바코드로 새 상품 등록
+    </button>
+    <button id="manage-manual-btn" class="link-btn" type="button">카메라를 쓸 수 없나요? 바코드 직접 입력</button>
     <input id="product-search" type="text" placeholder="등록된 상품 검색" autocomplete="off">
     <div id="product-list" class="product-list"></div>
   </main>
@@ -419,7 +427,7 @@
   <div class="modal-scanner">
     <button id="scanner-close" class="modal-close" type="button">✕</button>
     <div id="scanner-region"></div>
-    <p class="scanner-hint">바코드를 사각형 안에 맞춰 주세요</p>
+    <p class="scanner-hint">바코드를 사각형 안에 맞추고<br>10~15cm 거리를 유지해 주세요</p>
   </div>
 </div>
 
@@ -452,7 +460,9 @@
   var supa = null;
   var cart = [];               // {barcode, name, price, qty, id}
   var html5QrCode = null;
+  var cameraStarted = false;
   var scanning = false;
+  var scanMode = 'cart';       // 'cart'(홈 화면, 장바구니에 담기) | 'manage'(상품관리 화면, DB 등록만)
   var pendingBarcode = null;
 
   // ---------- Supabase ----------
@@ -557,7 +567,8 @@
   }
 
   // ---------- Scanner ----------
-  document.getElementById('scan-btn').addEventListener('click', openScanner);
+  document.getElementById('scan-btn').addEventListener('click', function(){ scanMode = 'cart'; openScanner(); });
+  document.getElementById('manage-scan-btn').addEventListener('click', function(){ scanMode = 'manage'; openScanner(); });
   document.getElementById('scanner-close').addEventListener('click', closeScanner);
 
   function openScanner(){
@@ -567,6 +578,12 @@
       return;
     }
     document.getElementById('scanner-modal').classList.remove('hidden');
+    scanning = true;
+    if(cameraStarted){
+      // 카메라가 이미 켜져 있으면 다시 권한을 묻지 않고 그대로 이어서 사용
+      html5QrCode.resume();
+      return;
+    }
     var formats = window.Html5QrcodeSupportedFormats ? [
       Html5QrcodeSupportedFormats.EAN_13,
       Html5QrcodeSupportedFormats.EAN_8,
@@ -574,24 +591,30 @@
       Html5QrcodeSupportedFormats.UPC_E,
       Html5QrcodeSupportedFormats.CODE_128
     ] : undefined;
-    html5QrCode = new Html5Qrcode("scanner-region", { formatsToSupport: formats, verbose:false });
-    scanning = true;
+    html5QrCode = new Html5Qrcode("scanner-region", {
+      formatsToSupport: formats,
+      useBarCodeDetectorIfSupported: true,
+      verbose:false
+    });
     html5QrCode.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 260, height: 150 } },
+      { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+      { fps: 10, qrbox: { width: 300, height: 130 }, aspectRatio: 1.7777778 },
       onScanSuccess,
       function(){ /* 인식 실패는 계속 시도하므로 무시 */ }
-    ).catch(function(err){
+    ).then(function(){
+      cameraStarted = true;
+    }).catch(function(err){
       showToast('카메라를 열 수 없어요. 권한을 확인해 주세요.', 'danger');
-      closeScanner();
+      scanning = false;
+      document.getElementById('scanner-modal').classList.add('hidden');
     });
   }
 
   function closeScanner(){
     document.getElementById('scanner-modal').classList.add('hidden');
-    if(html5QrCode && scanning){
-      scanning = false;
-      html5QrCode.stop().then(function(){ html5QrCode.clear(); }).catch(function(){});
+    scanning = false;
+    if(cameraStarted){
+      try{ html5QrCode.pause(true); }catch(e){}
     }
   }
 
@@ -599,17 +622,27 @@
     if(!scanning) return;
     scanning = false;
     beep();
-    html5QrCode.stop().then(function(){
-      html5QrCode.clear();
-      document.getElementById('scanner-modal').classList.add('hidden');
-      lookupProduct(decodedText.trim());
-    }).catch(function(){
-      document.getElementById('scanner-modal').classList.add('hidden');
-      lookupProduct(decodedText.trim());
-    });
+    try{ html5QrCode.pause(true); }catch(e){}
+    document.getElementById('scanner-modal').classList.add('hidden');
+    lookupProduct(decodedText.trim());
   }
 
+  window.addEventListener('beforeunload', function(){
+    if(cameraStarted){ try{ html5QrCode.stop(); }catch(e){} }
+  });
+
   document.getElementById('manual-barcode-btn').addEventListener('click', function(){
+    scanMode = 'cart';
+    if(!supa){
+      showToast('먼저 설정 탭에서 Supabase를 연결해 주세요.', 'danger');
+      switchView('settings');
+      return;
+    }
+    var code = window.prompt('바코드 번호를 입력해 주세요');
+    if(code && code.trim()) lookupProduct(code.trim());
+  });
+  document.getElementById('manage-manual-btn').addEventListener('click', function(){
+    scanMode = 'manage';
     if(!supa){
       showToast('먼저 설정 탭에서 Supabase를 연결해 주세요.', 'danger');
       switchView('settings');
@@ -625,8 +658,13 @@
       var res = await supa.from('products').select('*').eq('barcode', barcode).maybeSingle();
       if(res.error) throw res.error;
       if(res.data){
-        addToCart(res.data);
-        showToast(res.data.name + ' 담았어요');
+        if(scanMode === 'manage'){
+          showToast(res.data.name + ' — 이미 등록된 상품이에요');
+          loadAllProducts(document.getElementById('product-search').value.trim());
+        }else{
+          addToCart(res.data);
+          showToast(res.data.name + ' 담았어요');
+        }
       }else{
         openRegisterModal(barcode);
       }
@@ -658,8 +696,13 @@
       var res = await supa.from('products').insert([{ barcode: pendingBarcode, name: name, price: price }]).select().single();
       if(res.error) throw res.error;
       document.getElementById('register-modal').classList.add('hidden');
-      addToCart(res.data);
-      showToast(name + ' 등록하고 담았어요');
+      if(scanMode === 'manage'){
+        showToast(name + ' 등록했어요');
+        loadAllProducts(document.getElementById('product-search').value.trim());
+      }else{
+        addToCart(res.data);
+        showToast(name + ' 등록하고 담았어요');
+      }
       pendingBarcode = null;
     }catch(e){
       showToast('등록에 실패했어요. 바코드가 중복되지 않았는지 확인해 주세요.', 'danger');
