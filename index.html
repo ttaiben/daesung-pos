@@ -290,8 +290,25 @@
     display:flex; flex-direction:column; align-items:center; justify-content:center;
     padding-top:var(--safe-top); padding-bottom:var(--safe-bottom);
   }
-  #scanner-region{ width:min(340px, 88vw); border-radius:var(--radius-lg); overflow:hidden; border:2px solid var(--color-brand-ochre); }
-  #scanner-region video{ border-radius:var(--radius-lg); }
+  #scanner-region{
+    position:relative;
+    width:min(340px, 88vw); height:240px;
+    border-radius:var(--radius-lg); overflow:hidden;
+    border:2px solid var(--color-brand-ochre); background:#000;
+  }
+  #scanner-region video{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; display:block; z-index:1; }
+  #scanner-guide{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:84%; height:110px;
+    border:2px solid rgba(255,255,255,.92);
+    border-radius:var(--radius-sm);
+    box-shadow:0 0 0 1000px rgba(0,0,0,.4);
+    pointer-events:none;
+    z-index:2;
+  }
+  .torch-btn{ left:18px; right:auto; }
+  .torch-btn.hidden{ display:none; }
+  .torch-btn.active{ background:var(--color-brand-ochre); color:var(--color-ink); }
   .scanner-hint{ color:var(--color-surface-card); font-size:14px; margin-top:18px; text-align:center; padding:0 30px; }
   .modal-close{
     position:absolute; top:calc(18px + var(--safe-top)); right:18px; width:36px; height:36px;
@@ -406,8 +423,11 @@
 <div id="scanner-modal" class="modal hidden">
   <div class="modal-scanner">
     <button id="scanner-close" class="modal-close" type="button">✕</button>
-    <div id="scanner-region"></div>
-    <p class="scanner-hint">바코드를 사각형 안에 맞추고<br>10~15cm 거리를 유지해 주세요</p>
+    <button id="torch-btn" class="modal-close torch-btn hidden" type="button">🔦</button>
+    <div id="scanner-region">
+      <div id="scanner-guide"></div>
+    </div>
+    <p class="scanner-hint">흰 사각형 안에 바코드를 가득 채우고<br>10~15cm 거리를 유지해 주세요</p>
   </div>
 </div>
 
@@ -552,10 +572,14 @@
   var videoEl = null;
   var mediaStream = null;
   var detectLoopId = null;
+  var scanCanvas = null;
+  var scanCtx = null;
+  var torchOn = false;
 
   document.getElementById('scan-btn').addEventListener('click', function(){ scanMode = 'cart'; openScanner(); });
   document.getElementById('manage-scan-btn').addEventListener('click', function(){ scanMode = 'manage'; openScanner(); });
   document.getElementById('scanner-close').addEventListener('click', closeScanner);
+  document.getElementById('torch-btn').addEventListener('click', toggleTorch);
 
   function openScanner(){
     if(!supa){
@@ -580,6 +604,7 @@
   function closeScanner(){
     document.getElementById('scanner-modal').classList.add('hidden');
     scanning = false;
+    if(torchOn) toggleTorch();
     if(cameraStarted){
       if(nativeSupported){
         if(detectLoopId) cancelAnimationFrame(detectLoopId);
@@ -602,6 +627,53 @@
     lookupProduct(decodedText.trim());
   }
 
+  // 고해상도로 먼저 시도하고, 기기가 거부하면 기본 해상도로 자동 완화
+  async function getCameraStream(){
+    try{
+      return await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+      });
+    }catch(e){
+      return await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false
+      });
+    }
+  }
+
+  function tryEnableContinuousFocus(){
+    try{
+      var track = mediaStream.getVideoTracks()[0];
+      var caps = track.getCapabilities ? track.getCapabilities() : {};
+      if(caps.focusMode && caps.focusMode.indexOf('continuous') !== -1){
+        track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function(){});
+      }
+    }catch(e){}
+  }
+
+  function refreshTorchAvailability(){
+    try{
+      var track = mediaStream.getVideoTracks()[0];
+      var caps = track.getCapabilities ? track.getCapabilities() : {};
+      document.getElementById('torch-btn').classList.toggle('hidden', !caps.torch);
+    }catch(e){
+      document.getElementById('torch-btn').classList.add('hidden');
+    }
+  }
+
+  function toggleTorch(){
+    if(!mediaStream) return;
+    try{
+      var track = mediaStream.getVideoTracks()[0];
+      var next = !torchOn;
+      track.applyConstraints({ advanced: [{ torch: next }] }).then(function(){
+        torchOn = next;
+        document.getElementById('torch-btn').classList.toggle('active', torchOn);
+      }).catch(function(){});
+    }catch(e){}
+  }
+
   // --- 네이티브 BarcodeDetector 경로: 안드로이드 크롬 등에서 기기 내장 ML 인식 엔진을
   //     그대로 사용해서, 웹앱 전용 바코드 앱과 가장 비슷한 속도/정확도를 냄 ---
   async function startNativeScanner(){
@@ -614,23 +686,22 @@
       return;
     }
     try{
-      mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' } },
-        audio: false
-      });
+      mediaStream = await getCameraStream();
       var region = document.getElementById('scanner-region');
-      region.innerHTML = '';
+      var oldVideo = region.querySelector('video');
+      if(oldVideo) oldVideo.remove();
       videoEl = document.createElement('video');
       videoEl.setAttribute('playsinline', 'true');
       videoEl.setAttribute('muted', '');
       videoEl.muted = true;
-      videoEl.style.width = '100%';
-      videoEl.style.height = '100%';
-      videoEl.style.objectFit = 'cover';
       region.appendChild(videoEl);
       videoEl.srcObject = mediaStream;
       await videoEl.play();
       cameraStarted = true;
+      tryEnableContinuousFocus();
+      refreshTorchAvailability();
+      scanCanvas = document.createElement('canvas');
+      scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
       runDetectLoop();
     }catch(err){
       console.error('native camera start error', err);
@@ -638,9 +709,43 @@
     }
   }
 
+  // 화면에 보이는 흰 가이드 박스 영역만 잘라내 분석 → 배경 잡음이 줄고
+  // 같은 해상도라도 바코드가 이미지에서 차지하는 비중이 커져서(디지털 확대 효과) 인식이 쉬워짐
+  function computeGuideCropRect(){
+    var region = document.getElementById('scanner-region');
+    var guide = document.getElementById('scanner-guide');
+    if(!region || !guide || !videoEl.videoWidth || !videoEl.videoHeight) return null;
+    var rRect = region.getBoundingClientRect();
+    var gRect = guide.getBoundingClientRect();
+    var containerW = rRect.width, containerH = rRect.height;
+    var nativeW = videoEl.videoWidth, nativeH = videoEl.videoHeight;
+    if(!containerW || !containerH) return null;
+    var scale = Math.max(containerW / nativeW, containerH / nativeH);
+    var dispW = nativeW * scale, dispH = nativeH * scale;
+    var offX = (dispW - containerW) / 2;
+    var offY = (dispH - containerH) / 2;
+    var x = (offX + (gRect.left - rRect.left)) / scale;
+    var y = (offY + (gRect.top - rRect.top)) / scale;
+    var w = gRect.width / scale;
+    var h = gRect.height / scale;
+    x = Math.max(0, Math.min(x, nativeW - 1));
+    y = Math.max(0, Math.min(y, nativeH - 1));
+    w = Math.max(1, Math.min(w, nativeW - x));
+    h = Math.max(1, Math.min(h, nativeH - y));
+    return { x:x, y:y, w:w, h:h };
+  }
+
   function runDetectLoop(){
     if(!scanning || !nativeDetector || !videoEl) return;
-    nativeDetector.detect(videoEl).then(function(codes){
+    var source = videoEl;
+    var crop = computeGuideCropRect();
+    if(crop){
+      scanCanvas.width = Math.round(crop.w);
+      scanCanvas.height = Math.round(crop.h);
+      scanCtx.drawImage(videoEl, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
+      source = scanCanvas;
+    }
+    nativeDetector.detect(source).then(function(codes){
       if(!scanning) return;
       if(codes && codes.length){
         var value = codes[0].rawValue || '';
@@ -671,7 +776,7 @@
       verbose:false
     });
     html5QrCode.start(
-      { facingMode: "environment" },
+      { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
       { fps: 10, qrbox: { width: 300, height: 130 }, aspectRatio: 1.7777778 },
       function(decodedText){
         if(checksumValid(decodedText)) onScanSuccess(decodedText);
