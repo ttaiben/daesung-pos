@@ -321,7 +321,7 @@
     padding:26px 22px calc(22px + var(--safe-bottom));
   }
   .modal-card h3{ margin:0 0 4px; font-size:18px; }
-  .reg-barcode-label{ font-size:13px; color:var(--color-muted); margin:0 0 14px; font-family:var(--font-num); }
+  .reg-barcode-hint{ font-size:13px; color:var(--color-muted); margin:0 0 14px; line-height:1.5; }
   .modal-card label{ font-size:13px; font-weight:600; color:var(--color-muted); display:block; margin:12px 0 6px; }
   .modal-card input{
     width:100%; height:44px; padding:0 14px; border:1px solid var(--color-hairline);
@@ -435,7 +435,9 @@
   <div class="modal-card-wrap">
     <div class="modal-card">
       <h3>등록되지 않은 상품이에요</h3>
-      <p class="reg-barcode-label">바코드: <span id="reg-barcode"></span></p>
+      <p class="reg-barcode-hint">스캔된 번호가 맞는지 확인하고, 다르면 고쳐서 등록해 주세요.</p>
+      <label for="reg-barcode">바코드</label>
+      <input id="reg-barcode" type="text" inputmode="numeric" class="font-num">
       <label for="reg-name">상품명</label>
       <input id="reg-name" type="text" placeholder="예: 진라면 매운맛">
       <label for="reg-price">가격</label>
@@ -678,7 +680,7 @@
   //     그대로 사용해서, 웹앱 전용 바코드 앱과 가장 비슷한 속도/정확도를 냄 ---
   async function startNativeScanner(){
     try{
-      nativeDetector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128'] });
+      nativeDetector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a'] });
     }catch(e){
       // 이 기기/브라우저는 지원 형식이 달라 네이티브 인식이 안 됨 → 대체 경로로 전환
       nativeSupported = false;
@@ -766,9 +768,7 @@
     var formats = window.Html5QrcodeSupportedFormats ? [
       Html5QrcodeSupportedFormats.EAN_13,
       Html5QrcodeSupportedFormats.EAN_8,
-      Html5QrcodeSupportedFormats.UPC_A,
-      Html5QrcodeSupportedFormats.UPC_E,
-      Html5QrcodeSupportedFormats.CODE_128
+      Html5QrcodeSupportedFormats.UPC_A
     ] : undefined;
     html5QrCode = new Html5Qrcode("scanner-region", {
       formatsToSupport: formats,
@@ -810,7 +810,7 @@
 
   // EAN-13 / EAN-8 / UPC-A / UPC-E 체크섬 검증 — 흔들림/반사로 잘못 읽은 코드를 걸러냄
   function checksumValid(code){
-    if(!/^\d+$/.test(code)) return true; // 숫자 바코드가 아니면(CODE_128 등) 검증 생략
+    if(!/^\d+$/.test(code)) return false; // 숫자로만 된 코드가 아니면 소매용 바코드가 아니므로 거부
     var d = code.split('').map(Number);
     var len = d.length;
     var sum, check, i;
@@ -832,7 +832,7 @@
       check = (10 - (sum % 10)) % 10;
       return check === d[7];
     }
-    return true; // 그 외 길이는 검증 생략
+    return false; // 8/12/13자리가 아니면 EAN/UPC 소매 바코드로 보지 않고 거부
   }
 
   window.addEventListener('beforeunload', function(){
@@ -889,7 +889,7 @@
 
   function openRegisterModal(barcode){
     pendingBarcode = barcode;
-    document.getElementById('reg-barcode').textContent = barcode;
+    document.getElementById('reg-barcode').value = barcode;
     document.getElementById('reg-name').value = '';
     document.getElementById('reg-price').value = '';
     document.getElementById('register-modal').classList.remove('hidden');
@@ -900,14 +900,19 @@
     pendingBarcode = null;
   });
   document.getElementById('reg-save').addEventListener('click', async function(){
+    var barcode = document.getElementById('reg-barcode').value.trim();
     var name = document.getElementById('reg-name').value.trim();
     var price = parseInt(document.getElementById('reg-price').value, 10);
+    if(!barcode){
+      showToast('바코드 번호를 확인해 주세요.', 'danger');
+      return;
+    }
     if(!name || !price || price <= 0){
       showToast('상품명과 가격을 확인해 주세요.', 'danger');
       return;
     }
     try{
-      var res = await supa.from('products').insert([{ barcode: pendingBarcode, name: name, price: price }]).select().single();
+      var res = await supa.from('products').insert([{ barcode: barcode, name: name, price: price }]).select().single();
       if(res.error) throw res.error;
       document.getElementById('register-modal').classList.add('hidden');
       if(scanMode === 'manage'){
