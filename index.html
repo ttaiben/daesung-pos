@@ -1001,6 +1001,17 @@
 
   // ---------- Manual search (home) ----------
   var searchTimer = null;
+  document.getElementById('search-input').addEventListener('keydown', function(e){
+    if(e.key !== 'Enter') return;
+    var val = this.value.trim();
+    if(/^\d{6,}$/.test(val)){
+      e.preventDefault();
+      scanMode = 'cart';
+      this.value = '';
+      document.getElementById('search-results').classList.remove('show');
+      lookupProduct(val);
+    }
+  });
   document.getElementById('search-input').addEventListener('input', function(){
     var q = this.value.trim();
     clearTimeout(searchTimer);
@@ -1120,6 +1131,16 @@
     }
   });
   var prodSearchTimer = null;
+  document.getElementById('product-search').addEventListener('keydown', function(e){
+    if(e.key !== 'Enter') return;
+    var val = this.value.trim();
+    if(/^\d{6,}$/.test(val)){
+      e.preventDefault();
+      scanMode = 'manage';
+      this.value = '';
+      lookupProduct(val);
+    }
+  });
   document.getElementById('product-search').addEventListener('input', function(){
     clearTimeout(prodSearchTimer);
     var q = this.value.trim();
